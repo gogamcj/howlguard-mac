@@ -1,0 +1,37 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and package
+        run: |
+          brew list cmake >/dev/null 2>&1 || brew install cmake
+          bash scripts/build_mac.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HowlGuard-1.2.0-mac
+          path: dist/HowlGuard-1.2.0-mac.zip
+
+      - name: Validate Audio Unit
+        continue-on-error: true
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R dist/HowlGuard-1.2.0-mac/HowlGuard.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -v aufx Hwgd Hwlg
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/HowlGuard-1.2.0-mac.zip
