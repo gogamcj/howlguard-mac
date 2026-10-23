@@ -6,6 +6,9 @@ on:
     tags: [ 'v*' ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
@@ -30,8 +33,11 @@ jobs:
           killall -9 AudioComponentRegistrar || true
           auval -v aufx Hwgd Hwlg
 
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v1.2.0
+          name: HowlGuard 1.2.0 for macOS
+          target_commitish: ${{ github.sha }}
           files: dist/HowlGuard-1.2.0-mac.zip
