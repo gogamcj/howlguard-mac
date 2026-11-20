@@ -22,14 +22,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: HowlGuard-1.3.0-mac
-          path: dist/HowlGuard-1.3.0-mac.zip
+          name: HowlGuard-1.3.1-mac
+          path: dist/HowlGuard-1.3.1-mac.zip
 
       - name: Validate Audio Unit
         continue-on-error: true
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
-          cp -R dist/HowlGuard-1.3.0-mac/HowlGuard.component ~/Library/Audio/Plug-Ins/Components/
+          cp -R dist/HowlGuard-1.3.1-mac/HowlGuard.component ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           auval -v aufx Hwgd Hwlg
 
@@ -37,7 +37,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.0
-          name: HowlGuard 1.3.0 for macOS
+          tag_name: v1.3.1
+          name: HowlGuard 1.3.1 for macOS
           target_commitish: ${{ github.sha }}
-          files: dist/HowlGuard-1.3.0-mac.zip
+          files: dist/HowlGuard-1.3.1-mac.zip

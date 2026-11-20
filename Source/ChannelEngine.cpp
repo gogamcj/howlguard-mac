@@ -125,6 +125,12 @@ void ChannelEngine::process (float* const* chans, int numChans, int numSamples) 
     }
     inPeakDb = std::max (inPeakDb.load(), juce::Decibels::gainToDecibels (inPeak, -100.0f));
 
+    // exact zeros: nothing at all reaches us (blocked by macOS privacy, or nothing routed)
+    if (inPeak <= 0.0f)
+        silentSamples = (int) std::min<long long> ((long long) silentSamples.load() + numSamples, 1 << 30);
+    else
+        silentSamples = 0;
+
     if (resetFilters.exchange (false))
         for (auto& s : audioSlots)
             for (auto& st : s.state)

@@ -87,6 +87,7 @@ public:
     float getOutputPeakDb() noexcept { return outPeakDb.exchange (-100.0f); }
     float getGainReductionDb() const noexcept { return grDb.load(); }
     bool isWatching() const noexcept { return watchingFlag.load(); }
+    double getDigitalSilenceSeconds() const noexcept { return silentSamples.load() / sampleRate; }
     int getActiveNotchCount() const noexcept { return activeCount.load(); }
     int getFixedNotchCount() const noexcept { return fixedCount.load(); }
     int getManualNotchCount() const noexcept { return manualCount.load(); }
@@ -179,6 +180,7 @@ private:
 
     std::atomic<float> inPeakDb { -100.0f }, outPeakDb { -100.0f }, grDb { 0.0f };
     std::atomic<bool> watchingFlag { false };
+    std::atomic<int> silentSamples { 0 };
     std::atomic<int> activeCount { 0 }, fixedCount { 0 }, manualCount { 0 };
     std::atomic<bool> resetFilters { false };
 

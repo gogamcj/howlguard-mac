@@ -5,7 +5,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-VERSION="1.3.0"
+VERSION="1.3.1"
 BUILD="$ROOT/build"
 OUT="$ROOT/dist/HowlGuard-$VERSION-mac"
 
@@ -33,8 +33,12 @@ cp "$ROOT/scripts/install_plugins.command" "$OUT/"
 chmod +x "$OUT/install_plugins.command"
 
 # Ad-hoc signature so Apple Silicon will run it (not notarized: first launch needs right-click > Open).
+# The designated requirement names only the bundle id, so macOS keeps the microphone
+# permission across updates (a plain ad-hoc signature changes with every build).
 for b in "$OUT/HowlGuard.app" "$OUT/HowlGuard.vst3" "$OUT/HowlGuard.component"; do
-    codesign --force --deep --sign - "$b"
+    BID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$b/Contents/Info.plist")
+    codesign --force --sign - --requirements "=designated => identifier \"$BID\"" "$b"
+    codesign -d -r- "$b"
 done
 
 (cd "$ROOT/dist" && rm -f "HowlGuard-$VERSION-mac.zip" && ditto -c -k --keepParent "HowlGuard-$VERSION-mac" "HowlGuard-$VERSION-mac.zip")

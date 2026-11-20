@@ -6,7 +6,7 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "")
 endif()
 
-project(HowlGuard VERSION 1.3.0 LANGUAGES C CXX)
+project(HowlGuard VERSION 1.3.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -54,6 +54,13 @@ target_sources(HowlGuard PRIVATE
     Source/ChannelEngine.cpp
     Source/dsp/FeedbackDetector.cpp
     Source/ui/SpectrumView.cpp)
+
+if(APPLE)
+    target_sources(HowlGuard PRIVATE Source/platform/MicPermission_mac.mm)
+    target_link_libraries(HowlGuard PRIVATE "-framework AVFoundation")
+else()
+    target_sources(HowlGuard PRIVATE Source/platform/MicPermission_other.cpp)
+endif()
 
 target_include_directories(HowlGuard PRIVATE Source)
 

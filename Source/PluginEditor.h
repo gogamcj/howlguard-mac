@@ -71,6 +71,9 @@ private:
     void renameChannel (int);
     void updateDeviceLabel();
     void enableAllChannels();
+    void checkInputHealth();
+    void fixMicPermission();
+    void restartAudio();
     howl::ChannelEngine& engine() { return proc.getEngine (selected); }
 
     void setupKnob (juce::Slider&, juce::Label&, const juce::String& title);
@@ -85,6 +88,8 @@ private:
     juce::TextButton modeButtons[4];
     juce::TextButton bypassButton, ringOutButton, fixAllButton, clearButton, audioButton, allChannelsButton;
     juce::Label deviceLabel;
+    juce::TextButton micWarning;
+    bool permissionRequested = false;
 
     juce::TextButton viewButtons[3];
     howl::ui::SpectrumView spectrum;

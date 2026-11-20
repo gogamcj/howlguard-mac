@@ -10,7 +10,7 @@
 3. 이 폴더에서 `bash scripts/build_mac.sh`
 
 처음 빌드할 때 JUCE 프레임워크를 인터넷에서 받아오므로 10~20분 걸릴 수 있습니다.
-결과물은 `dist/HowlGuard-1.3.0-mac.zip` 에 생깁니다 (Apple Silicon + Intel 유니버설).
+결과물은 `dist/HowlGuard-1.3.1-mac.zip` 에 생깁니다 (Apple Silicon + Intel 유니버설).
 
 ## GitHub에서 자동 빌드
 

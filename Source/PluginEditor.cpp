@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "platform/MicPermission.h"
 
 #if JucePlugin_Build_Standalone
  #include <juce_audio_utils/juce_audio_utils.h>
@@ -206,6 +207,11 @@ HowlGuardEditor::HowlGuardEditor (HowlGuardProcessor& p)
     }
 
     deviceLabel.setJustificationType (juce::Justification::centredLeft);
+
+    micWarning.setColour (juce::TextButton::buttonColourId, colours::watch.darker (0.4f));
+    micWarning.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    micWarning.onClick = [this] { fixMicPermission(); };
+    addChildComponent (micWarning);
     deviceLabel.setColour (juce::Label::textColourId, colours::dimText);
     deviceLabel.setFont (juce::FontOptions (12.0f));
     addAndMakeVisible (deviceLabel);
@@ -488,6 +494,76 @@ void HowlGuardEditor::renameChannel (int i)
         }), true);
 }
 
+void HowlGuardEditor::restartAudio()
+{
+    if (auto* h = standaloneHolder())
+    {
+        h->deviceManager.closeAudioDevice();
+        h->deviceManager.restartLastAudioDevice();
+    }
+}
+
+void HowlGuardEditor::fixMicPermission()
+{
+    // A grant made for an older build doesn't match this one, and macOS then blocks input
+    // without asking. Reset it so the normal "allow microphone" prompt appears again.
+    howl::resetMicPermission();
+    howl::requestMicPermission ([safe = juce::Component::SafePointer<HowlGuardEditor> (this)] (bool granted)
+    {
+        if (safe == nullptr)
+            return;
+        safe->restartAudio();
+        if (! granted)
+            howl::openMicPrivacySettings();
+    });
+}
+
+void HowlGuardEditor::checkInputHealth()
+{
+    auto* h = standaloneHolder();
+    bool show = false;
+    juce::String text;
+
+    if (h != nullptr)
+    {
+        const auto perm = howl::getMicPermission();
+        auto* dev = h->deviceManager.getCurrentAudioDevice();
+        const bool hasInputs = dev != nullptr && dev->getActiveInputChannels().countNumberOfSetBits() > 0;
+
+        bool allSilent = hasInputs;
+        for (int i = 0; i < proc.getNumEngines() && allSilent; ++i)
+            allSilent = proc.getEngine (i).getDigitalSilenceSeconds() > 4.0;
+
+        if (perm == howl::MicPermission::undetermined && ! permissionRequested)
+        {
+            permissionRequested = true;
+            howl::requestMicPermission ([safe = juce::Component::SafePointer<HowlGuardEditor> (this)] (bool)
+            {
+                if (safe != nullptr)
+                    safe->restartAudio();
+            });
+        }
+        else if (perm == howl::MicPermission::denied)
+        {
+            show = true;
+            text = K ("macOS가 오디오 입력을 막고 있습니다 (마이크 권한 없음). 여기를 누르면 권한을 다시 요청합니다.");
+        }
+        else if (allSilent)
+        {
+            show = true;
+            text = K ("입력에 신호가 전혀 없습니다. 여기를 누르면 마이크 권한을 다시 요청합니다. 그래도 같으면 콘솔의 USB 출력 라우팅을 확인하세요.");
+        }
+    }
+
+    if (show)
+        micWarning.setButtonText (text);
+    if (show != micWarning.isVisible())
+    {
+        micWarning.setVisible (show);
+        resized();
+    }
+}
+
 void HowlGuardEditor::enableAllChannels()
 {
     auto* h = standaloneHolder();
@@ -597,7 +673,10 @@ void HowlGuardEditor::timerCallback()
     }
 
     if (++tick % 30 == 0)
+    {
         updateDeviceLabel();
+        checkInputHealth();
+    }
 
     // standalone: auto-save settings a few seconds after a change
     if (tick % 150 == 0 && proc.getStateVersion() != lastSavedVersion)
@@ -726,6 +805,12 @@ void HowlGuardEditor::resized()
     }
 
     // --- spectrum
+    if (micWarning.isVisible())
+    {
+        micWarning.setBounds (area.removeFromTop (34));
+        area.removeFromTop (6);
+    }
+
     auto viewRow = area.removeFromTop (26);
     for (auto& b : viewButtons)
     {
