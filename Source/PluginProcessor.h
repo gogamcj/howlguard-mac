@@ -9,7 +9,7 @@
 class HowlGuardProcessor final : public juce::AudioProcessor
 {
 public:
-    static constexpr int maxChannels = 16;
+    static constexpr int maxChannels = 32;
 
     HowlGuardProcessor();
     ~HowlGuardProcessor() override;

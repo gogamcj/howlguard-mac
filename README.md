@@ -10,7 +10,7 @@
 3. 이 폴더에서 `bash scripts/build_mac.sh`
 
 처음 빌드할 때 JUCE 프레임워크를 인터넷에서 받아오므로 10~20분 걸릴 수 있습니다.
-결과물은 `dist/HowlGuard-1.2.0-mac.zip` 에 생깁니다 (Apple Silicon + Intel 유니버설).
+결과물은 `dist/HowlGuard-1.3.0-mac.zip` 에 생깁니다 (Apple Silicon + Intel 유니버설).
 
 ## GitHub에서 자동 빌드
 
@@ -21,5 +21,5 @@
 
 - `Source/dsp/FeedbackDetector.*` : 170 ms FFT 분석, 순음/고조파/지속성/증가율로 하울링 판정
 - `Source/ChannelEngine.*` : 채널별 노치 32개(자동/고정, 복원, 1분 기억), 컴프레서, 미터
-- `Source/PluginProcessor.*` : 단독 실행은 최대 16채널을 채널마다 따로, 플러그인은 1채널(스테레오 링크)
+- `Source/PluginProcessor.*` : 단독 실행은 최대 32채널을 채널마다 따로, 플러그인은 1채널(스테레오 링크)
 - `Source/PluginEditor.*`, `Source/ui/*` : 화면

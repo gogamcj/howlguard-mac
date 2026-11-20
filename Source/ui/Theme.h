@@ -19,6 +19,7 @@ namespace colours
     const juce::Colour output     { 0xff3d9df2 };
     const juce::Colour autoNotch  { 0xff3d9df2 };
     const juce::Colour fixedNotch { 0xfff29a3d };
+    const juce::Colour manualNotch { 0xffb07cff };
     const juce::Colour watch      { 0xffe84a4a };
     const juce::Colour ok         { 0xff3fbf6a };
     const juce::Colour accent     { 0xff3d9df2 };

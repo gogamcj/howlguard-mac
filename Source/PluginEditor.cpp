@@ -28,22 +28,35 @@ namespace
 namespace howl::ui
 {
 
-int ChannelTabs::tabAt (float x) const
+int ChannelTabs::getNumRows() const
 {
-    if (tabs.empty())
-        return -1;
-    const float w = (float) getWidth() / (float) tabs.size();
-    return juce::jlimit (0, (int) tabs.size() - 1, (int) (x / w));
+    return tabs.size() > 16 ? 2 : 1;
+}
+
+juce::Rectangle<float> ChannelTabs::tabBounds (int i) const
+{
+    const int rows = getNumRows();
+    const int perRow = ((int) tabs.size() + rows - 1) / rows;
+    const float w = (float) getWidth() / (float) perRow;
+    const float h = (float) getHeight() / (float) rows;
+    return { (float) (i % perRow) * w, (float) (i / perRow) * h, w, h };
+}
+
+int ChannelTabs::tabAt (juce::Point<float> p) const
+{
+    for (int i = 0; i < (int) tabs.size(); ++i)
+        if (tabBounds (i).contains (p))
+            return i;
+    return -1;
 }
 
 void ChannelTabs::paint (juce::Graphics& g)
 {
     if (tabs.empty())
         return;
-    const float w = (float) getWidth() / (float) tabs.size();
     for (size_t i = 0; i < tabs.size(); ++i)
     {
-        auto r = juce::Rectangle<float> ((float) i * w, 0, w, (float) getHeight()).reduced (1.5f, 0);
+        auto r = tabBounds ((int) i).reduced (1.5f);
         const bool sel = (int) i == selected;
         g.setColour (sel ? colours::panelEdge.brighter (0.25f) : colours::panel);
         g.fillRoundedRectangle (r, 4.0f);
@@ -70,14 +83,14 @@ void ChannelTabs::paint (juce::Graphics& g)
 
 void ChannelTabs::mouseDown (const juce::MouseEvent& e)
 {
-    const int t = tabAt (e.position.x);
+    const int t = tabAt (e.position);
     if (t >= 0 && onSelect)
         onSelect (t);
 }
 
 void ChannelTabs::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    const int t = tabAt (e.position.x);
+    const int t = tabAt (e.position);
     if (t >= 0 && onRename)
         onRename (t);
 }
@@ -185,9 +198,14 @@ HowlGuardEditor::HowlGuardEditor (HowlGuardProcessor& p)
         audioButton.setButtonText (K ("오디오 설정"));
         audioButton.onClick = [] { if (auto* h = standaloneHolder()) h->showAudioSettingsDialog(); };
         addAndMakeVisible (audioButton);
+
+        allChannelsButton.setButtonText (K ("모든 채널 사용"));
+        allChannelsButton.setTooltip (K ("장치의 입력/출력 채널을 최대 32개까지 한 번에 켭니다"));
+        allChannelsButton.onClick = [this] { enableAllChannels(); };
+        addAndMakeVisible (allChannelsButton);
     }
 
-    deviceLabel.setJustificationType (juce::Justification::centredRight);
+    deviceLabel.setJustificationType (juce::Justification::centredLeft);
     deviceLabel.setColour (juce::Label::textColourId, colours::dimText);
     deviceLabel.setFont (juce::FontOptions (12.0f));
     addAndMakeVisible (deviceLabel);
@@ -205,8 +223,8 @@ HowlGuardEditor::HowlGuardEditor (HowlGuardProcessor& p)
     }
     viewButtons[2].setToggleState (true, juce::dontSendNotification);
     addAndMakeVisible (spectrum);
-    spectrum.onRemoveNotch = [this] (int slot) { engine().removeNotch (slot); proc.markDirty(); };
-    spectrum.onToggleFixed = [this] (int slot) { engine().toggleFixed (slot); proc.markDirty(); };
+    spectrum.setEngine (&engine());
+    spectrum.onEdited = [this] { proc.markDirty(); };
 
     // --- knobs
     setupKnob (strength, strengthLabel, K ("강도"));
@@ -228,13 +246,12 @@ HowlGuardEditor::HowlGuardEditor (HowlGuardProcessor& p)
     release.textFromValueFunction = [] (double v) { return juce::String (v, 1) + " s"; };
     release.onValueChange = [this] { engine().settings.releaseSec = (float) release.getValue(); proc.markDirty(); };
 
-    setupKnob (width, widthLabel, K ("노치 폭"));
-    width.setRange (0.0, 2.0, 1.0);
+    setupKnob (width, widthLabel, K ("자동 노치 폭"));
+    width.setRange (0.0, howl::numAutoWidths - 1, 1.0);
     width.setDoubleClickReturnValue (true, 1.0);
     width.textFromValueFunction = [] (double v)
     {
-        const int i = juce::roundToInt (v);
-        return i == 0 ? K ("좁게 1/40") : i == 2 ? K ("넓게 1/10") : K ("보통 1/20");
+        return "1/" + juce::String (juce::roundToInt (1.0 / howl::notchWidthOctaves (juce::roundToInt (v)))) + K (" 옥타브");
     };
     width.onValueChange = [this] { engine().settings.width = juce::roundToInt (width.getValue()); proc.markDirty(); };
 
@@ -360,6 +377,7 @@ void HowlGuardEditor::selectChannel (int i)
     proc.displayChannel = selected;
     tabs.selected = selected;
     tabs.repaint();
+    spectrum.setEngine (&engine());
     refreshControls();
 }
 
@@ -470,6 +488,36 @@ void HowlGuardEditor::renameChannel (int i)
         }), true);
 }
 
+void HowlGuardEditor::enableAllChannels()
+{
+    auto* h = standaloneHolder();
+    if (h == nullptr)
+        return;
+
+    auto& dm = h->deviceManager;
+    auto* dev = dm.getCurrentAudioDevice();
+    if (dev == nullptr)
+    {
+        h->showAudioSettingsDialog();
+        return;
+    }
+
+    auto setup = dm.getAudioDeviceSetup();
+    const int ins  = juce::jmin (HowlGuardProcessor::maxChannels, dev->getInputChannelNames().size());
+    const int outs = juce::jmin (HowlGuardProcessor::maxChannels, dev->getOutputChannelNames().size());
+    setup.inputChannels.clear();
+    setup.outputChannels.clear();
+    setup.inputChannels.setRange (0, ins, true);
+    setup.outputChannels.setRange (0, outs, true);
+    setup.useDefaultInputChannels = false;
+    setup.useDefaultOutputChannels = false;
+
+    const auto err = dm.setAudioDeviceSetup (setup, true);
+    if (err.isNotEmpty())
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "HowlGuard", err);
+    updateDeviceLabel();
+}
+
 void HowlGuardEditor::updateDeviceLabel()
 {
     auto* h = standaloneHolder();
@@ -484,7 +532,11 @@ void HowlGuardEditor::updateDeviceLabel()
         const double sr = dev->getCurrentSampleRate();
         const int buf = dev->getCurrentBufferSizeSamples();
         const double rt = sr > 0 ? (dev->getInputLatencyInSamples() + dev->getOutputLatencyInSamples() + 2 * buf) / sr * 1000.0 : 0.0;
-        deviceLabel.setText (dev->getName() + "  |  " + juce::String (sr / 1000.0, 1) + " kHz  |  "
+        const auto chans = [] (int active, int total) { return juce::String (active) + "/" + juce::String (total); };
+        deviceLabel.setText (dev->getName() + "  |  " + dev->getTypeName() + "  |  in "
+                                 + chans (dev->getActiveInputChannels().countNumberOfSetBits(), dev->getInputChannelNames().size())
+                                 + " out " + chans (dev->getActiveOutputChannels().countNumberOfSetBits(), dev->getOutputChannelNames().size())
+                                 + "  |  " + juce::String (sr / 1000.0, 1) + " kHz  |  "
                                  + juce::String (buf) + K (" 샘플  |  왕복 약 ") + juce::String (rt, 1) + " ms",
                              juce::dontSendNotification);
     }
@@ -502,6 +554,7 @@ void HowlGuardEditor::timerCallback()
     {
         shownEngines = n;
         tabs.setVisible (proc.isStandaloneApp() && n > 1);
+        tabs.tabs.resize ((size_t) n);
         if (selected >= n)
             selectChannel (n - 1);
         resized();
@@ -511,14 +564,15 @@ void HowlGuardEditor::timerCallback()
 
     howl::ChannelEngine::Display d;
     e.getDisplay (d);
-    spectrum.update (d, e.getNotches(), e.getSampleRate(), e.settings.width.load(), e.settings.bypass.load());
+    spectrum.update (d, e.getNotches(), e.getSampleRate(), e.settings.bypass.load());
 
     inMeter.setLevel (e.getInputPeakDb());
     outMeter.setLevel (e.getOutputPeakDb());
     grMeter.setLevel (e.getGainReductionDb());
 
     activeLabel.setText (K ("활성 노치  ") + juce::String (e.getActiveNotchCount()) + " / " + juce::String (howl::maxNotches)
-                             + K ("   (고정 ") + juce::String (e.getFixedNotchCount()) + ")",
+                             + K ("   (고정 ") + juce::String (e.getFixedNotchCount())
+                             + K (", 수동 ") + juce::String (e.getManualNotchCount()) + ")",
                          juce::dontSendNotification);
 
     juce::String watch;
@@ -569,7 +623,7 @@ void HowlGuardEditor::paint (juce::Graphics& g)
 
     g.setColour (colours::dimText);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("HowlGuard 1.2.0", getLocalBounds().reduced (12, 4).removeFromBottom (12), juce::Justification::bottomRight);
+    g.drawText ("HowlGuard " JucePlugin_VersionString, getLocalBounds().reduced (12, 4).removeFromBottom (12), juce::Justification::bottomRight);
 }
 
 void HowlGuardEditor::resized()
@@ -579,7 +633,7 @@ void HowlGuardEditor::resized()
 
     if (tabs.isVisible())
     {
-        tabs.setBounds (area.removeFromTop (30));
+        tabs.setBounds (area.removeFromTop (30 * tabs.getNumRows()));
         area.removeFromTop (6);
     }
 
@@ -594,10 +648,14 @@ void HowlGuardEditor::resized()
         top.removeFromLeft (4);
     }
     if (audioButton.isVisible())
+    {
         audioButton.setBounds (top.removeFromRight (104));
-    top.removeFromRight (8);
-    deviceLabel.setBounds (top);
-    area.removeFromTop (8);
+        top.removeFromRight (4);
+        allChannelsButton.setBounds (top.removeFromRight (116));
+    }
+    area.removeFromTop (2);
+    deviceLabel.setBounds (area.removeFromTop (20));
+    area.removeFromTop (4);
 
     // --- bottom bar
     auto bottom = area.removeFromBottom (52);

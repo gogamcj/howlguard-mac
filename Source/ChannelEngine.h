@@ -49,11 +49,13 @@ struct NotchInfo
     int slot;
     float freq;
     float depthDb;
+    float widthOct;
     bool fixed;
+    bool manual;
 };
 
 // One independent processing chain: detector + 32 notches + compressor.
-// In the plug-in, one engine processes all (linked) channels; the standalone app runs one per channel.
+// In the plug-in, one engine processes both (linked) channels; the standalone app runs one per channel.
 class ChannelEngine
 {
 public:
@@ -87,11 +89,19 @@ public:
     bool isWatching() const noexcept { return watchingFlag.load(); }
     int getActiveNotchCount() const noexcept { return activeCount.load(); }
     int getFixedNotchCount() const noexcept { return fixedCount.load(); }
+    int getManualNotchCount() const noexcept { return manualCount.load(); }
 
     void removeNotch (int slot);
     void toggleFixed (int slot);
     void fixAll();
-    void clearNotches (bool includeFixed);
+    void clearNotches (bool includeFixed); // includeFixed also removes manual notches
+
+    // Manual notches: edited by hand, never touched by the detector, never released.
+    int addManualNotch (float freq);       // returns the slot, or -1 if every slot is taken
+    void setNotchFreq (int slot, float freq);
+    void setNotchDepth (int slot, float depthDb);
+    void setNotchWidth (int slot, float widthOct);
+    void revertToAuto (int slot);
 
     // Save/restore notches (venue files, plug-in state).
     juce::ValueTree notchesToValueTree (bool includeAuto) const;
@@ -102,6 +112,8 @@ private:
     {
         bool active = false;
         bool fixed = false;
+        bool manual = false;
+        float widthOct = 0.05f;    // used by manual notches; auto notches follow settings.width
         float freq = 1000.0f;
         float depth = 0.0f;        // dB, <= 0
         float deepest = 0.0f;      // deepest depth reached (for fast re-capture)
@@ -126,7 +138,7 @@ private:
     {
         float freq = 1000.0f, q = 28.0f, gainDb = 0.0f;
         BiquadCoeffs coeffs;
-        std::array<BiquadState, 16> state;
+        std::array<BiquadState, 2> state;
         bool inUse = false;
     };
 
@@ -136,6 +148,7 @@ private:
     bool isRemembered (float freq, double now) const;
     void publishLocked();
     double toleranceOct() const;
+    Notch* editableSlot (int slot);
 
     double sampleRate = 48000.0;
     int maxBlock = 512;
@@ -166,7 +179,7 @@ private:
 
     std::atomic<float> inPeakDb { -100.0f }, outPeakDb { -100.0f }, grDb { 0.0f };
     std::atomic<bool> watchingFlag { false };
-    std::atomic<int> activeCount { 0 }, fixedCount { 0 };
+    std::atomic<int> activeCount { 0 }, fixedCount { 0 }, manualCount { 0 };
     std::atomic<bool> resetFilters { false };
 
     JUCE_DECLARE_NON_COPYABLE (ChannelEngine)

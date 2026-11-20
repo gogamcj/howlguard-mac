@@ -13,15 +13,23 @@ inline double bandwidthToQ (double octaves)
     return std::sqrt (p) / (p - 1.0);
 }
 
+constexpr int numAutoWidths = 5;
+
+// Auto-notch width choices: 1/40, 1/20 (default), 1/10, 1/6, 1/3 octave.
 inline double notchWidthOctaves (int widthIndex)
 {
     switch (widthIndex)
     {
         case 0:  return 1.0 / 40.0;
         case 2:  return 1.0 / 10.0;
+        case 3:  return 1.0 / 6.0;
+        case 4:  return 1.0 / 3.0;
         default: return 1.0 / 20.0;
     }
 }
+
+constexpr double minNotchWidthOct = 0.01, maxNotchWidthOct = 3.0;
+constexpr float maxManualDepthDb = -40.0f;
 
 struct BiquadCoeffs
 {

@@ -30,7 +30,7 @@ void Settings::fromValueTree (const juce::ValueTree& v)
     strength      = (float) v.getProperty ("strength", strength.load());
     sensitivity   = (float) v.getProperty ("sensitivity", sensitivity.load());
     releaseSec    = (float) v.getProperty ("releaseSec", releaseSec.load());
-    width         = juce::jlimit (0, 2, (int) v.getProperty ("width", width.load()));
+    width         = juce::jlimit (0, numAutoWidths - 1, (int) v.getProperty ("width", width.load()));
     bypass        = (bool) v.getProperty ("bypass", bypass.load());
     compOn        = (bool) v.getProperty ("compOn", compOn.load());
     compThreshold = (float) v.getProperty ("compThreshold", compThreshold.load());
@@ -97,7 +97,7 @@ void ChannelEngine::prepare (double sr, int maxBlockSize)
 //==============================================================================
 void ChannelEngine::process (float* const* chans, int numChans, int numSamples) noexcept
 {
-    numChans = std::min (numChans, 16);
+    numChans = std::min (numChans, 2);
     if (numChans <= 0 || numSamples <= 0)
         return;
 
@@ -144,7 +144,10 @@ void ChannelEngine::process (float* const* chans, int numChans, int numSamples) 
         bool dirty = false;
         if (std::abs (tFreq - a.freq) > 0.01f || std::abs (tQ - a.q) > 1.0e-3f)
         {
-            if (a.gainDb > -0.05f)
+            // small moves (dragging, width changes, auto-notch tracking) follow directly;
+            // a slot reused far away is faded out first so the old notch doesn't sweep
+            const bool bigJump = std::abs (std::log2 (tFreq / a.freq)) > 0.25f;
+            if (! bigJump || a.gainDb > -0.05f)
             {
                 a.freq = tFreq;
                 a.q = tQ;
@@ -152,7 +155,7 @@ void ChannelEngine::process (float* const* chans, int numChans, int numSamples) 
             }
             else
             {
-                tGain = 0.0f; // fade the old notch out before moving it
+                tGain = 0.0f;
             }
         }
 
@@ -349,7 +352,7 @@ void ChannelEngine::onHowl (float freq, double now)
     double bestDist = tol;
     for (auto& nt : notches)
     {
-        if (! nt.active)
+        if (! nt.active || nt.manual)
             continue;
         const double d = std::abs (std::log2 ((double) freq / nt.freq));
         if (d < bestDist)
@@ -386,7 +389,7 @@ void ChannelEngine::onHowl (float freq, double now)
     {
         for (auto& nt : notches)
         {
-            if (nt.fixed)
+            if (nt.fixed || nt.manual)
                 continue;
             if (slot == nullptr || nt.depth > slot->depth
                 || (std::abs (nt.depth - slot->depth) < 1.0e-6f && nt.lastHowl < slot->lastHowl))
@@ -409,6 +412,7 @@ void ChannelEngine::onHowl (float freq, double now)
     }
 
     slot->active = true;
+    slot->manual = false;
     slot->fixed = ringOut;
     slot->freq = freq;
     slot->depth = depth;
@@ -424,7 +428,7 @@ void ChannelEngine::tickRelease (double now)
 
     for (auto& nt : notches)
     {
-        if (! nt.active || nt.fixed || now - nt.lastHowl < 3.0)
+        if (! nt.active || nt.fixed || nt.manual || now - nt.lastHowl < 3.0)
             continue;
 
         nt.depth += rate * (float) dt;
@@ -448,42 +452,49 @@ bool ChannelEngine::isRemembered (float freq, double now) const
         if (now - m.time < 60.0 && std::abs (std::log2 ((double) freq / m.freq)) < tol)
             return true;
     for (const auto& nt : notches)
-        if (nt.active && std::abs (std::log2 ((double) freq / nt.freq)) < tol)
+        if (nt.active && ! nt.manual && std::abs (std::log2 ((double) freq / nt.freq)) < tol)
             return true;
     return false;
 }
 
 void ChannelEngine::publishLocked()
 {
-    const float q = (float) bandwidthToQ (notchWidthOctaves (settings.width.load()));
-    int active = 0, fixed = 0;
+    const float autoQ = (float) bandwidthToQ (notchWidthOctaves (settings.width.load()));
+    int active = 0, fixed = 0, manual = 0;
     for (int i = 0; i < maxNotches; ++i)
     {
         const auto& nt = notches[(size_t) i];
         auto& p = published[(size_t) i];
         p.freq.store (nt.freq, std::memory_order_relaxed);
-        p.q.store (q, std::memory_order_relaxed);
+        p.q.store (nt.manual ? (float) bandwidthToQ (nt.widthOct) : autoQ, std::memory_order_relaxed);
         p.gainDb.store (nt.depth, std::memory_order_relaxed);
         p.active.store (nt.active, std::memory_order_relaxed);
         if (nt.active)
         {
             ++active;
-            if (nt.fixed)
+            if (nt.manual)
+                ++manual;
+            else if (nt.fixed)
                 ++fixed;
         }
     }
     activeCount = active;
     fixedCount = fixed;
+    manualCount = manual;
 }
 
 //==============================================================================
 std::vector<NotchInfo> ChannelEngine::getNotches() const
 {
     std::vector<NotchInfo> v;
+    const float autoWidth = (float) notchWidthOctaves (settings.width.load());
     const juce::ScopedLock sl (bankLock);
     for (int i = 0; i < maxNotches; ++i)
-        if (notches[(size_t) i].active)
-            v.push_back ({ i, notches[(size_t) i].freq, notches[(size_t) i].depth, notches[(size_t) i].fixed });
+    {
+        const auto& nt = notches[(size_t) i];
+        if (nt.active)
+            v.push_back ({ i, nt.freq, nt.depth, nt.manual ? nt.widthOct : autoWidth, nt.fixed, nt.manual });
+    }
     return v;
 }
 
@@ -511,7 +522,7 @@ void ChannelEngine::fixAll()
 {
     const juce::ScopedLock sl (bankLock);
     for (auto& nt : notches)
-        if (nt.active)
+        if (nt.active && ! nt.manual)
             nt.fixed = true;
     publishLocked();
 }
@@ -520,9 +531,89 @@ void ChannelEngine::clearNotches (bool includeFixed)
 {
     const juce::ScopedLock sl (bankLock);
     for (auto& nt : notches)
-        if (includeFixed || ! nt.fixed)
+        if (includeFixed || ! (nt.fixed || nt.manual))
             nt = Notch();
     memory.clear();
+    publishLocked();
+}
+
+ChannelEngine::Notch* ChannelEngine::editableSlot (int slot)
+{
+    if (! juce::isPositiveAndBelow (slot, maxNotches) || ! notches[(size_t) slot].active)
+        return nullptr;
+
+    auto& nt = notches[(size_t) slot];
+    if (! nt.manual)
+    {
+        // touching an auto/fixed notch by hand turns it into a manual one, keeping its current width
+        nt.manual = true;
+        nt.widthOct = (float) notchWidthOctaves (settings.width.load());
+    }
+    return &nt;
+}
+
+int ChannelEngine::addManualNotch (float freq)
+{
+    const juce::ScopedLock sl (bankLock);
+    Notch* slot = nullptr;
+    for (auto& nt : notches)
+        if (! nt.active) { slot = &nt; break; }
+
+    if (slot == nullptr) // replace the shallowest automatic notch
+        for (auto& nt : notches)
+            if (! nt.fixed && ! nt.manual && (slot == nullptr || nt.depth > slot->depth))
+                slot = &nt;
+
+    if (slot == nullptr)
+        return -1;
+
+    *slot = Notch();
+    slot->active = true;
+    slot->manual = true;
+    slot->freq = juce::jlimit (20.0f, 20000.0f, freq);
+    slot->depth = slot->deepest = -6.0f;
+    slot->widthOct = (float) notchWidthOctaves (settings.width.load());
+    slot->lastHowl = lastTick;
+    publishLocked();
+    return (int) (slot - notches.data());
+}
+
+void ChannelEngine::setNotchFreq (int slot, float freq)
+{
+    const juce::ScopedLock sl (bankLock);
+    if (auto* nt = editableSlot (slot))
+        nt->freq = juce::jlimit (20.0f, 20000.0f, freq);
+    publishLocked();
+}
+
+void ChannelEngine::setNotchDepth (int slot, float depthDb)
+{
+    const juce::ScopedLock sl (bankLock);
+    if (auto* nt = editableSlot (slot))
+        nt->depth = nt->deepest = juce::jlimit (maxManualDepthDb, 0.0f, depthDb);
+    publishLocked();
+}
+
+void ChannelEngine::setNotchWidth (int slot, float widthOct)
+{
+    const juce::ScopedLock sl (bankLock);
+    if (auto* nt = editableSlot (slot))
+        nt->widthOct = (float) juce::jlimit (minNotchWidthOct, maxNotchWidthOct, (double) widthOct);
+    publishLocked();
+}
+
+void ChannelEngine::revertToAuto (int slot)
+{
+    const juce::ScopedLock sl (bankLock);
+    if (juce::isPositiveAndBelow (slot, maxNotches) && notches[(size_t) slot].active)
+    {
+        auto& nt = notches[(size_t) slot];
+        const float maxDepth = -(3.0f + 27.0f * settings.strength.load());
+        nt.manual = false;
+        nt.fixed = false;
+        nt.depth = nt.deepest = juce::jlimit (maxDepth, -0.5f, nt.depth);
+        nt.lastHowl = lastTick; // starts releasing after the usual 3 s
+    }
     publishLocked();
 }
 
@@ -532,12 +623,17 @@ juce::ValueTree ChannelEngine::notchesToValueTree (bool includeAuto) const
     const juce::ScopedLock sl (bankLock);
     for (const auto& nt : notches)
     {
-        if (! nt.active || (! nt.fixed && ! includeAuto))
+        if (! nt.active || (! nt.fixed && ! nt.manual && ! includeAuto))
             continue;
         juce::ValueTree n ("NOTCH");
         n.setProperty ("freq", nt.freq, nullptr);
         n.setProperty ("depth", nt.depth, nullptr);
         n.setProperty ("fixed", nt.fixed, nullptr);
+        if (nt.manual)
+        {
+            n.setProperty ("manual", true, nullptr);
+            n.setProperty ("width", nt.widthOct, nullptr);
+        }
         v.appendChild (n, nullptr);
     }
     return v;
@@ -558,9 +654,11 @@ void ChannelEngine::notchesFromValueTree (const juce::ValueTree& v)
         auto& nt = notches[(size_t) i++];
         nt.active = true;
         nt.freq = juce::jlimit (20.0f, 20000.0f, (float) n.getProperty ("freq", 1000.0f));
-        nt.depth = juce::jlimit (-30.0f, -0.5f, (float) n.getProperty ("depth", -6.0f));
+        nt.depth = juce::jlimit (maxManualDepthDb, 0.0f, (float) n.getProperty ("depth", -6.0f));
         nt.deepest = nt.depth;
         nt.fixed = (bool) n.getProperty ("fixed", true);
+        nt.manual = (bool) n.getProperty ("manual", false);
+        nt.widthOct = (float) juce::jlimit (minNotchWidthOct, maxNotchWidthOct, (double) n.getProperty ("width", 0.05));
         nt.lastHowl = lastTick;
     }
     publishLocked();

@@ -28,8 +28,11 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
+    int getNumRows() const;
+
 private:
-    int tabAt (float x) const;
+    juce::Rectangle<float> tabBounds (int i) const;
+    int tabAt (juce::Point<float>) const;
 };
 
 // Horizontal segmented level meter, -60..0 dBFS.
@@ -67,6 +70,7 @@ private:
     void loadVenue();
     void renameChannel (int);
     void updateDeviceLabel();
+    void enableAllChannels();
     howl::ChannelEngine& engine() { return proc.getEngine (selected); }
 
     void setupKnob (juce::Slider&, juce::Label&, const juce::String& title);
@@ -79,7 +83,7 @@ private:
 
     howl::ui::ChannelTabs tabs;
     juce::TextButton modeButtons[4];
-    juce::TextButton bypassButton, ringOutButton, fixAllButton, clearButton, audioButton;
+    juce::TextButton bypassButton, ringOutButton, fixAllButton, clearButton, audioButton, allChannelsButton;
     juce::Label deviceLabel;
 
     juce::TextButton viewButtons[3];
